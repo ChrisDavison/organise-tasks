@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: node --test test/
+      - run: node --test
 
       - name: Check the tag matches manifest.json
         run: test "$(node -p "require('./manifest.json').version")" = "$GITHUB_REF_NAME"
