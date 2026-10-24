@@ -1,25 +1,26 @@
-# Obsidian Todo Sort
+# Organise Tasks
 
-An Obsidian plugin with four commands: **`Todo: Sort completed tasks to bottom`**,
-**`Todo: Sort by due date`**, **`Todo: Clear completed tasks`**, and
-**`Todo: Clear completed tasks in current document`**.
+An Obsidian plugin with four commands: **Sort completed tasks to bottom**,
+**Sort by due date**, **Clear completed tasks**, and
+**Clear completed tasks in current document**. In the command palette they
+appear as **Organise Tasks: Sort completed tasks to bottom** and so on.
 
-It reorders the todo list at the level your cursor is on, or at the shallowest
+It reorders the task list at the level your cursor is on, or at the shallowest
 list level touched by your selection. Completed tasks sink to the bottom and
 everything else keeps its order.
 
-`Todo: Sort by due date` orders incomplete tasks soonest first using `📅`
+**Sort by due date** orders incomplete tasks soonest first using `📅`
 due dates, falling back to `⏳` scheduled dates. Undated incomplete tasks follow
 dated ones. Completed tasks move to the bottom using the completed-task sorting
 rules described below. Overdue tasks are not specially grouped or highlighted.
 You can optionally limit sorting to dates within a number of days from today.
 
-`Todo: Clear completed tasks` removes `[x]` / `[X]` items at the same list
+**Clear completed tasks** removes `[x]` / `[X]` items at the same list
 level and within the same cursor or selection scope as sorting. Children and
 annotations are removed with their parent, including unfinished children.
 Cancelled `[-]` items are kept by default. The edit can be undone in one step.
 
-`Todo: Clear completed tasks in current document` applies the same clearing
+**Clear completed tasks in current document** applies the same clearing
 rules to every list in the active document, including nested tasks. When a
 completed parent is removed, its whole subtree is removed with it.
 
@@ -41,7 +42,7 @@ completed parent is removed, its whole subtree is removed with it.
 - The cursor follows its task after a sort. With a selection, it moves to the
   first selected task. A single undo reverses the sort.
 
-These are the defaults. Settings → Todo can adjust the rules below without
+These are the defaults. Settings → Organise Tasks can adjust the rules below without
 changing any of the above until you touch a setting.
 
 ## Settings
@@ -71,18 +72,46 @@ changing any of the above until you touch a setting.
   is beyond the range, even when nothing changes in the note. Tasks
   using an in-range scheduled-date fallback are not counted.
 
+## Installation
+
+### Community plugins
+
+1. Open Settings → Community plugins and select **Browse**.
+2. Search for **Organise Tasks**, then select **Install** and **Enable**.
+
+### BRAT
+
+1. Install and enable the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin.
+2. Run **BRAT: Add a beta plugin for testing** and enter
+   `ChrisDavison/organise-tasks`.
+3. Enable **Organise Tasks** in Settings → Community plugins.
+
+### Manual
+
+1. Download `main.js` and `manifest.json` from the latest
+   [GitHub release](https://github.com/ChrisDavison/organise-tasks/releases).
+2. Put both files in `<vault>/.obsidian/plugins/organise-tasks/`. The folder
+   name must match the plugin ID in `manifest.json`.
+3. Enable **Organise Tasks** in Settings → Community plugins.
+
+### Upgrading from Todo Sorting
+
+Version 2.0.0 changed the plugin ID from `todo-sort-completed` to
+`organise-tasks`. Install Organise Tasks, copy `data.json` from
+`.obsidian/plugins/todo-sort-completed/` into `.obsidian/plugins/organise-tasks/`
+to keep your settings, rebind any hotkeys, then remove the old plugin.
+
 ## Usage
 
-1. Download `main.js` and `manifest.json` from the desired [GitHub release](https://github.com/ChrisDavison/obsidian-todo-sort/releases).
-2. Put both files in `<vault>/.obsidian/plugins/todo-sort-completed/`. The folder
-   name must match the plugin ID in `manifest.json`.
-3. Enable **Todo Sort** in Settings → Community plugins.
-4. Run `Todo: Sort completed tasks to bottom` from the command palette, or bind
-   a hotkey to it. Run `Todo: Sort by due date` to order incomplete tasks by
-   their due or scheduled date. The two clear commands remove completed tasks
-   from the current list scope or the whole active document.
+Run **Sort completed tasks to bottom** from the command palette, or bind a
+hotkey to it. Run **Sort by due date** to order incomplete tasks by their due
+or scheduled date. The two clear commands remove completed tasks from the
+current list scope or the whole active document.
+
+## Development
 
 There is no build step and no dependencies. `main.js` is the complete source.
+Run the tests with `node --test`.
 
 ## Scope
 
