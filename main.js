@@ -1,7 +1,7 @@
 const { Notice, Plugin, PluginSettingTab, Setting } = require("obsidian");
 
 /*
- * Todo: Sort completed tasks to bottom and Todo: Sort by due date
+ * Organise Tasks: sort tasks by completion or due date, and clear completed tasks
  *
  * Sorts one list level only. Whole subtrees move together and children keep
  * their order. A completed task is `[x]`/`[X]` (done) or `[-]` (cancelled);
@@ -532,10 +532,10 @@ function planTaskClear(parsed, lines, start, settings, removed, stats) {
   return end;
 }
 
-class TodoSortCompletedPlugin extends Plugin {
+class OrganiseTasksPlugin extends Plugin {
   async onload() {
     this.settings = normalizeSettings(await this.loadData());
-    this.addSettingTab(new TodoSortSettingTab(this.app, this));
+    this.addSettingTab(new OrganiseTasksSettingTab(this.app, this));
     this.addCommand({
       id: "sort-completed-to-bottom",
       name: "Sort completed tasks to bottom",
@@ -598,7 +598,7 @@ class TodoSortCompletedPlugin extends Plugin {
     }
 
     if (!removed.size) {
-      new Notice("Todo: nothing to clear in this document." + clearBlockedNotice(stats.blocked));
+      new Notice("Nothing to clear in this document." + clearBlockedNotice(stats.blocked));
       return;
     }
 
@@ -611,7 +611,7 @@ class TodoSortCompletedPlugin extends Plugin {
       }],
     });
     new Notice(
-      "Todo: cleared " + stats.cleared + " completed task" + (stats.cleared === 1 ? "" : "s") +
+      "Cleared " + stats.cleared + " completed task" + (stats.cleared === 1 ? "" : "s") +
       " from this document." + clearBlockedNotice(stats.blocked)
     );
   }
@@ -625,7 +625,7 @@ class TodoSortCompletedPlugin extends Plugin {
     const selections = editor.listSelections();
 
     if (selections.length > 1) {
-      new Notice("Todo: multiple selections are not supported.");
+      new Notice("Multiple selections are not supported.");
       return;
     }
 
@@ -645,7 +645,7 @@ class TodoSortCompletedPlugin extends Plugin {
         if (parsed[i].kind !== "none") widths.push(parsed[i].indent);
       }
       if (!widths.length) {
-        new Notice(mode === "clear" ? "Todo: nothing to clear." : "Todo: nothing to sort.");
+        new Notice(mode === "clear" ? "Nothing to clear." : "Nothing to sort.");
         return;
       }
       width = Math.min(...widths);
@@ -657,13 +657,13 @@ class TodoSortCompletedPlugin extends Plugin {
       let anchor = cursor.line;
       while (anchor >= 0 && parsed[anchor].kind === "none") {
         if (!isBlank(lines[anchor]) && parsed[anchor].indent === 0) {
-          new Notice("Todo: cursor is not in a list.");
+          new Notice("Cursor is not in a list.");
           return;
         }
         anchor -= 1;
       }
       if (anchor < 0) {
-        new Notice("Todo: cursor is not in a list.");
+        new Notice("Cursor is not in a list.");
         return;
       }
       width = parsed[anchor].indent;
@@ -699,8 +699,8 @@ class TodoSortCompletedPlugin extends Plugin {
 
     if (!results.length) {
       new Notice(mode === "clear"
-        ? "Todo: nothing to clear." + clearBlockedNotice(blockedTrees)
-        : "Todo: nothing to sort." + skippedDateNotice(skippedDates));
+        ? "Nothing to clear." + clearBlockedNotice(blockedTrees)
+        : "Nothing to sort." + skippedDateNotice(skippedDates));
       return;
     }
 
@@ -736,7 +736,7 @@ class TodoSortCompletedPlugin extends Plugin {
         from = { line: start - 1, ch: lines[start - 1].length };
       }
       editor.transaction({ changes: [{ from, to, text }] });
-      new Notice("Todo: cleared " + movedTotal + " task" + (movedTotal === 1 ? "" : "s") + "." +
+      new Notice("Cleared " + movedTotal + " task" + (movedTotal === 1 ? "" : "s") + "." +
         clearBlockedNotice(blockedTrees));
       return;
     }
@@ -762,16 +762,16 @@ class TodoSortCompletedPlugin extends Plugin {
     }
 
     if (mode === "due-date") {
-      new Notice("Todo: sorted tasks by due date; completed tasks moved to the bottom." + skippedDateNotice(skippedDates));
+      new Notice("Sorted tasks by due date; completed tasks moved to the bottom." + skippedDateNotice(skippedDates));
     } else {
       new Notice(
-        "Todo: moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
+        "Moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
       );
     }
   }
 }
 
-class TodoSortSettingTab extends PluginSettingTab {
+class OrganiseTasksSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -875,4 +875,4 @@ class TodoSortSettingTab extends PluginSettingTab {
   }
 }
 
-module.exports = TodoSortCompletedPlugin;
+module.exports = OrganiseTasksPlugin;

@@ -94,7 +94,7 @@ test("60-day range includes its last day and overdue dates, falls back to schedu
     input[0], input[1], input[4], input[8],
   ].join("\n"));
   assert.equal(plugin.notices.at(-1),
-    "Todo: sorted tasks by due date; completed tasks moved to the bottom. " +
+    "Sorted tasks by due date; completed tasks moved to the bottom. " +
     "2 tasks skipped from date sorting (outside date range).");
 });
 
@@ -108,7 +108,7 @@ test("blank range preserves unlimited sorting; zero includes today but not tomor
   const unlimited = pluginWithSettings({ sortableDateRangeDays: "" });
   await unlimited.onload();
   assert.equal(sort(unlimited, input.join("\n")), [input[2], input[1], input[0], input[3]].join("\n"));
-  assert.equal(unlimited.notices.at(-1), "Todo: sorted tasks by due date; completed tasks moved to the bottom.");
+  assert.equal(unlimited.notices.at(-1), "Sorted tasks by due date; completed tasks moved to the bottom.");
 
   const zero = pluginWithSettings({ sortableDateRangeDays: 0 });
   await zero.onload();
@@ -122,7 +122,7 @@ test("reports skipped tasks when no edit is needed and counts only the sorted le
   const input = "- [ ] June 📅 2026-06-01\n  - [ ] Nested July 📅 2026-07-01\n- [ ] Undated\n- [ ] March 📅 2026-03-03";
   assert.equal(sort(plugin, input), input);
   assert.equal(plugin.notices.at(-1),
-    "Todo: nothing to sort. 2 tasks skipped from date sorting (outside date range).");
+    "Nothing to sort. 2 tasks skipped from date sorting (outside date range).");
 });
 
 test("reports a single scheduled-only task beyond the range", async () => {
@@ -131,7 +131,7 @@ test("reports a single scheduled-only task beyond the range", async () => {
   const input = "- [ ] Scheduled June ⏳ 2026-06-01";
   assert.equal(sort(plugin, input), input);
   assert.equal(plugin.notices.at(-1),
-    "Todo: nothing to sort. 1 task skipped from date sorting (outside date range).");
+    "Nothing to sort. 1 task skipped from date sorting (outside date range).");
 });
 
 test("counts skipped tasks across separate selected list groups", async () => {
@@ -179,7 +179,7 @@ test("date range does not change completed-task sorting", async () => {
   await plugin.onload();
   const input = "- [x] Done\n- [ ] June 📅 2026-06-01\n- [ ] Today 📅 2026-01-01";
   assert.equal(sort(plugin, input, "completed"), "- [ ] June 📅 2026-06-01\n- [ ] Today 📅 2026-01-01\n- [x] Done");
-  assert.equal(plugin.notices.at(-1), "Todo: moved 1 completed task to the bottom.");
+  assert.equal(plugin.notices.at(-1), "Moved 1 completed task to the bottom.");
 });
 
 
@@ -208,7 +208,7 @@ test("clear handles a single final task and leaves incomplete tasks alone", asyn
   assert.equal(sort(plugin, "- [x] Done", "clear"), "");
   assert.equal(sort(plugin, "- [ ] Open\n- [x] Done", "clear"), "- [ ] Open");
   assert.equal(sort(plugin, "- [ ] Open", "clear"), "- [ ] Open");
-  assert.equal(plugin.notices.at(-1), "Todo: nothing to clear.");
+  assert.equal(plugin.notices.at(-1), "Nothing to clear.");
 });
 
 test("document clear removes completed tasks from separate and nested lists", async () => {
@@ -241,7 +241,7 @@ test("document clear removes completed tasks from separate and nested lists", as
     "- [ ] Open",
   ].join("\n"));
   assert.equal(plugin.notices.at(-1),
-    "Todo: cleared 2 completed tasks from this document.");
+    "Cleared 2 completed tasks from this document.");
 });
 
 test("document clear can remove cancelled tasks and ignores fenced checkboxes", async () => {
@@ -255,7 +255,7 @@ test("document clear can remove cancelled tasks and ignores fenced checkboxes", 
   plugin.clearCompletedDocument(editor);
   assert.equal(value, "```\n- [x] Example\n```");
   assert.equal(plugin.notices.at(-1),
-    "Todo: cleared 1 completed task from this document.");
+    "Cleared 1 completed task from this document.");
 });
 
 test("complete-tree safeguard blocks a parent but continues clearing other document tasks", async () => {
@@ -283,7 +283,7 @@ test("complete-tree safeguard blocks a parent but continues clearing other docum
     "  - [x] yes",
   ].join("\n"));
   assert.equal(plugin.notices.at(-1),
-    "Todo: cleared 2 completed tasks from this document. " +
+    "Cleared 2 completed tasks from this document. " +
     "1 incomplete task tree prevented some completed tasks from being cleared.");
 });
 
@@ -301,7 +301,7 @@ test("complete-sibling setting clears valid children from a blocked document tre
   plugin.clearCompletedDocument(editor);
   assert.equal(value, "- [x] Parent\n  - [ ] not");
   assert.equal(plugin.notices.at(-1),
-    "Todo: cleared 3 completed tasks from this document. " +
+    "Cleared 3 completed tasks from this document. " +
     "1 incomplete task tree prevented some completed tasks from being cleared.");
 });
 
