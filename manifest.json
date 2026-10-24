@@ -1,7 +1,7 @@
 {
   "id": "organise-tasks",
   "name": "Organise Tasks",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "minAppVersion": "1.8.7",
   "description": "Sort tasks by completion or due date at the current list level, and clear completed tasks from a list or the whole note.",
   "author": "Chris Davison",
