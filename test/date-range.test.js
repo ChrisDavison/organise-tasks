@@ -23,6 +23,7 @@ function pluginWithSettings(saved) {
   class Setting {
     constructor() { settings.push(this); }
     setName(name) { this.name = name; return this; }
+    setHeading() { this.heading = true; return this; }
     setDesc() { return this; }
     addText(callback) { this.addControl(callback); return this; }
     addToggle(callback) { this.addControl(callback); return this; }

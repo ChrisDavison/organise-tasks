@@ -782,6 +782,23 @@ class OrganiseTasksSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     new Setting(containerEl)
+      .setName("Tab width")
+      .setDesc("Columns a tab character counts for when measuring list indentation (1-8).")
+      .addText((text) =>
+        text.setValue(String(this.plugin.settings.tabWidth)).onChange(async (value) => {
+          const parsed = Number.parseInt(value, 10);
+          if (Number.isNaN(parsed) || parsed < 1 || parsed > 8) {
+            text.setValue(String(this.plugin.settings.tabWidth));
+            return;
+          }
+          this.plugin.settings.tabWidth = parsed;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl).setName("Sorting").setHeading();
+
+    new Setting(containerEl)
       .setName("Cancelled counts as completed")
       .setDesc("Treat [-] tasks as completed, so they sink below done tasks. When off, [-] counts as incomplete and stays on top.")
       .addToggle((toggle) =>
@@ -790,6 +807,45 @@ class OrganiseTasksSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         })
       );
+
+    new Setting(containerEl)
+      .setName("Undated completed tasks")
+      .setDesc("Where completed tasks without a date go within the completed group.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("bottom", "Bottom of the completed group")
+          .addOption("top", "Top of the completed group")
+          .setValue(this.plugin.settings.undatedCompletedAtBottom ? "bottom" : "top")
+          .onChange(async (value) => {
+            this.plugin.settings.undatedCompletedAtBottom = value === "bottom";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Sortable date range (days)")
+      .setDesc(
+        "Sort incomplete tasks dated through today plus this many days (0-365000). " +
+        "Later due dates can fall back to an in-range scheduled date; otherwise " +
+        "they stay with undated tasks. Leave blank to always sort by date."
+      )
+      .addText((text) =>
+        text.setPlaceholder("Always sort").setValue(
+          this.plugin.settings.sortableDateRangeDays === null ? "" : String(this.plugin.settings.sortableDateRangeDays)
+        ).onChange(async (value) => {
+          const trimmed = value.trim();
+          const days = parseSortableDays(trimmed);
+          if (trimmed && days === null) {
+            const previous = this.plugin.settings.sortableDateRangeDays;
+            text.setValue(previous === null ? "" : String(previous));
+            return;
+          }
+          this.plugin.settings.sortableDateRangeDays = days;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl).setName("Clearing").setHeading();
 
     new Setting(containerEl)
       .setName("Clear cancelled tasks")
@@ -819,58 +875,6 @@ class OrganiseTasksSettingTab extends PluginSettingTab {
           this.plugin.settings.clearCompleteSiblingsInBlockedTrees = value;
           await this.plugin.saveSettings();
         })
-      );
-
-    new Setting(containerEl)
-      .setName("Tab width")
-      .setDesc("Columns a tab character counts for when measuring list indentation (1-8).")
-      .addText((text) =>
-        text.setValue(String(this.plugin.settings.tabWidth)).onChange(async (value) => {
-          const parsed = Number.parseInt(value, 10);
-          if (Number.isNaN(parsed) || parsed < 1 || parsed > 8) {
-            text.setValue(String(this.plugin.settings.tabWidth));
-            return;
-          }
-          this.plugin.settings.tabWidth = parsed;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Sortable date range (days)")
-      .setDesc(
-        "Sort incomplete tasks dated through today plus this many days (0-365000). " +
-        "Later due dates can fall back to an in-range scheduled date; otherwise " +
-        "they stay with undated tasks. Leave blank to always sort by date."
-      )
-      .addText((text) =>
-        text.setPlaceholder("Always sort").setValue(
-          this.plugin.settings.sortableDateRangeDays === null ? "" : String(this.plugin.settings.sortableDateRangeDays)
-        ).onChange(async (value) => {
-          const trimmed = value.trim();
-          const days = parseSortableDays(trimmed);
-          if (trimmed && days === null) {
-            const previous = this.plugin.settings.sortableDateRangeDays;
-            text.setValue(previous === null ? "" : String(previous));
-            return;
-          }
-          this.plugin.settings.sortableDateRangeDays = days;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Undated completed tasks")
-      .setDesc("Where completed tasks without a date go within the completed group.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("bottom", "Bottom of the completed group")
-          .addOption("top", "Top of the completed group")
-          .setValue(this.plugin.settings.undatedCompletedAtBottom ? "bottom" : "top")
-          .onChange(async (value) => {
-            this.plugin.settings.undatedCompletedAtBottom = value === "bottom";
-            await this.plugin.saveSettings();
-          })
       );
   }
 }
