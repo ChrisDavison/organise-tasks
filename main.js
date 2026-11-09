@@ -4,18 +4,19 @@ const { Notice, Plugin, PluginSettingTab, Setting } = require("obsidian");
  * Organise Tasks: sort tasks by completion or due date, and clear completed tasks
  *
  * Sorts one list level only. Whole subtrees move together and children keep
- * their order. A completed task is `[x]`/`[X]` (done) or `[-]` (cancelled);
- * cancelled items sink below done items, and both are ordered newest first by
+ * their order. A completed task is `[x]`/`[X]` (done), `[-]`, or a status
+ * configured as CANCELLED in the installed Tasks plugin. Cancelled items sink
+ * below done items, and both are ordered newest first by
  * their ✅/❌ date, with undated items last. Anything else at the sorted level
- * (including plain bullets, [/], [>]) is treated as incomplete and stays on top.
+ * (including plain bullets and other status symbols) is incomplete and stays on top.
  *
  * Without a selection the level is the cursor item's own level. With a
  * selection the level is the shallowest list level present, and every affected
  * parent's complete child list is sorted.
  *
  * The rules above are the defaults; a settings tab can treat `[-]` as
- * incomplete, change the tab width, and move undated completed tasks to the
- * top of the completed group.
+ * incomplete (along with custom cancelled statuses), change the tab width,
+ * and move undated completed tasks to the top of the completed group.
  *
  * Plain JavaScript on purpose: no build step, no dependencies.
  */
@@ -24,7 +25,7 @@ const TAB_WIDTH = 4;
 const MAX_SORTABLE_RANGE_DAYS = 365000;
 
 const DEFAULT_SETTINGS = {
-  // `[-]` is completed (sinks below done). Off: `[-]` counts as incomplete.
+  // Cancelled tasks are completed (sink below done). Off: count as incomplete.
   cancelledCountsAsCompleted: true,
   clearCancelledTasks: false,
   requireCompleteTreeForClearing: false,
@@ -72,8 +73,8 @@ function normalizeSettings(loaded) {
   return settings;
 }
 
-// Checkbox marker: [-], [ ], [x], [X]. Tested before the plain-bullet pattern.
-const CHECKBOX_RE = /^([ \t]*)([-*+])([ \t]+)\[([ xX-])\](?=[ \t]|$)/;
+// Single-character checkbox marker. Tested before the plain-bullet pattern.
+const CHECKBOX_RE = /^([ \t]*)([-*+])([ \t]+)\[(.)\](?=[ \t]|$)/;
 // Any other bullet, including ones with no content.
 const BULLET_RE = /^([ \t]*)([-*+])(?=[ \t]|$)/;
 const DONE_DATE_RE = /✅\s*(\d{4}-\d{2}-\d{2})/;
@@ -100,7 +101,7 @@ function isBlank(line) {
   return /^[ \t]*$/.test(content);
 }
 
-function parseLines(lines, settings) {
+function parseLines(lines, settings, cancelledSymbols) {
   const parsed = [];
   let inFence = false;
 
@@ -125,18 +126,16 @@ function parseLines(lines, settings) {
     }
 
     const checkbox = CHECKBOX_RE.exec(content);
-    if (checkbox) {
+    if (checkbox && (" xX-".includes(checkbox[4]) || cancelledSymbols.has(checkbox[4]))) {
       const symbol = checkbox[4];
       parsed.push({
         kind: "checkbox",
         indent: indentWidth(checkbox[1], settings.tabWidth),
         quoteDepth,
         status:
-          symbol === "x" || symbol === "X"
-            ? "done"
-            : symbol === "-" && settings.cancelledCountsAsCompleted
-              ? "cancelled"
-              : "incomplete",
+          cancelledSymbols.has(symbol)
+            ? (settings.cancelledCountsAsCompleted ? "cancelled" : "incomplete")
+            : (symbol === "x" || symbol === "X" ? "done" : "incomplete"),
         doneDate: (DONE_DATE_RE.exec(content) || [])[1] || null,
         cancelDate: (CANCEL_DATE_RE.exec(content) || [])[1] || null,
         dueDate: (DUE_DATE_RE.exec(content) || [])[1] || null,
@@ -583,9 +582,29 @@ class OrganiseTasksPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  clearCompletedDocument(editor) {
+  async cancelledTaskSymbols() {
+    const symbols = new Set(["-"]);
+    const tasksManifest = this.app.plugins.manifests["obsidian-tasks-plugin"];
+    if (!tasksManifest) return symbols;
+
+    const dataPath = tasksManifest.dir + "/data.json";
+    if (!(await this.app.vault.adapter.exists(dataPath))) return symbols;
+    const statusSettings = JSON.parse(await this.app.vault.adapter.read(dataPath))?.statusSettings;
+    for (const statuses of [statusSettings?.coreStatuses, statusSettings?.customStatuses]) {
+      if (!Array.isArray(statuses)) continue;
+      for (const status of statuses) {
+        if (status?.type === "CANCELLED" && typeof status.symbol === "string" && status.symbol.length === 1) {
+          symbols.add(status.symbol);
+        }
+      }
+    }
+    return symbols;
+  }
+
+  async clearCompletedDocument(editor) {
+    const cancelledSymbols = await this.cancelledTaskSymbols();
     const lines = editor.getValue().split("\n");
-    const parsed = parseLines(lines, { ...this.settings, cancelledCountsAsCompleted: true });
+    const parsed = parseLines(lines, { ...this.settings, cancelledCountsAsCompleted: true }, cancelledSymbols);
     const removed = new Set();
     const stats = { cleared: 0, blocked: 0 };
 
@@ -616,11 +635,12 @@ class OrganiseTasksPlugin extends Plugin {
     );
   }
 
-  sortTasks(editor, mode) {
+  async sortTasks(editor, mode) {
+    const cancelledSymbols = await this.cancelledTaskSymbols();
     const lines = editor.getValue().split("\n");
     const parsed = parseLines(lines, mode === "clear"
       ? { ...this.settings, cancelledCountsAsCompleted: true }
-      : this.settings);
+      : this.settings, cancelledSymbols);
     const cursor = editor.getCursor();
     const selections = editor.listSelections();
 
@@ -800,7 +820,7 @@ class OrganiseTasksSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Cancelled counts as completed")
-      .setDesc("Treat [-] tasks as completed, so they sink below done tasks. When off, [-] counts as incomplete and stays on top.")
+      .setDesc("Treat cancelled tasks as completed, so they sink below done tasks. When off, they count as incomplete.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.cancelledCountsAsCompleted).onChange(async (value) => {
           this.plugin.settings.cancelledCountsAsCompleted = value;
@@ -849,7 +869,7 @@ class OrganiseTasksSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Clear cancelled tasks")
-      .setDesc("Also remove [-] tasks when running either clear command. Independent of the sorting setting.")
+      .setDesc("Also remove cancelled tasks when running either clear command. Independent of the sorting setting.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.clearCancelledTasks).onChange(async (value) => {
           this.plugin.settings.clearCancelledTasks = value;

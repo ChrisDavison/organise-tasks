@@ -6,7 +6,7 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 
-function pluginWithSettings(saved) {
+function pluginWithSettings(saved, loadTasksData = null) {
   const settings = [];
   const notices = [];
   class FixedDate extends Date {
@@ -51,12 +51,28 @@ function pluginWithSettings(saved) {
   };
   vm.runInNewContext(source, context, { filename: "main.js" });
   const plugin = new context.module.exports();
+  const tasksDirectory = ".obsidian/plugins/obsidian-tasks-plugin";
+  plugin.app = {
+    plugins: { manifests: loadTasksData ? { "obsidian-tasks-plugin": { dir: tasksDirectory } } : {} },
+    vault: {
+      adapter: {
+        exists: async (dataPath) => {
+          assert.equal(dataPath, tasksDirectory + "/data.json");
+          return true;
+        },
+        read: async (dataPath) => {
+          assert.equal(dataPath, tasksDirectory + "/data.json");
+          return JSON.stringify(await loadTasksData());
+        },
+      },
+    },
+  };
   plugin.settingControls = settings;
   plugin.notices = notices;
   return plugin;
 }
 
-function sort(plugin, input, mode = "due-date", selection = null) {
+async function sort(plugin, input, mode = "due-date", selection = null) {
   let value = input;
   plugin.notices.length = 0;
   const editor = {
@@ -71,9 +87,112 @@ function sort(plugin, input, mode = "due-date", selection = null) {
     },
     setCursor: () => {},
   };
-  plugin.sortTasks(editor, mode);
+  await plugin.sortTasks(editor, mode);
   return value;
 }
+
+test("Tasks CANCELLED types sort below done tasks by cancellation date in both sort commands", async () => {
+  const plugin = pluginWithSettings(null, async () => ({
+    statusSettings: {
+      coreStatuses: [],
+      customStatuses: [
+        { symbol: ">", name: "Refiled", type: "CANCELLED" },
+        { symbol: "!", name: "Dropped", type: "CANCELLED" },
+        { symbol: "/", name: "Cancelled", type: "IN_PROGRESS" },
+      ],
+    },
+  }));
+  await plugin.onload();
+  const input = [
+    "> - [>] Older ❌ 2026-01-01 📅 2020-01-01",
+    ">   - [ ] Child moves with its parent",
+    "> - [-] Newer ❌ 2026-01-03",
+    "> - [x] Done ✅ 2025-12-31",
+    "> - [!] Middle ❌ 2026-01-02",
+    "> - [/] Still in progress",
+    "> - [ ] Open 📅 2026-01-01",
+  ];
+  assert.equal(await sort(plugin, input.join("\n"), "completed"), [
+    input[5], input[6], input[3], input[2], input[4], input[0], input[1],
+  ].join("\n"));
+  assert.equal(await sort(plugin, input.join("\n")), [
+    input[6], input[5], input[3], input[2], input[4], input[0], input[1],
+  ].join("\n"));
+});
+
+test("custom cancelled tasks follow the sorting toggle and undated placement", async () => {
+  const plugin = pluginWithSettings({ cancelledCountsAsCompleted: false }, async () => ({
+    statusSettings: { customStatuses: [{ symbol: ">", type: "CANCELLED" }] },
+  }));
+  await plugin.onload();
+  const input = "- [>] Undated\n- [>] Dated ❌ 2026-01-01\n- [x] Done\n- [ ] Open";
+  assert.equal(await sort(plugin, input, "completed"),
+    "- [>] Undated\n- [>] Dated ❌ 2026-01-01\n- [ ] Open\n- [x] Done");
+  plugin.settings.cancelledCountsAsCompleted = true;
+  plugin.settings.undatedCompletedAtBottom = false;
+  assert.equal(await sort(plugin, input, "completed"),
+    "- [ ] Open\n- [x] Done\n- [>] Undated\n- [>] Dated ❌ 2026-01-01");
+});
+
+test("commands read changed Tasks settings and fall back when Tasks is not installed", async () => {
+  let type = "CANCELLED";
+  const plugin = pluginWithSettings(null, async () => ({
+    statusSettings: { customStatuses: [{ symbol: ">", type }] },
+  }));
+  await plugin.onload();
+  const input = "- [>] Refiled\n- [-] Cancelled\n- [ ] Open\n- [x] Done";
+  assert.equal(await sort(plugin, input, "completed"),
+    "- [ ] Open\n- [x] Done\n- [>] Refiled\n- [-] Cancelled");
+  type = "IN_PROGRESS";
+  const fallback = "- [>] Refiled\n- [ ] Open\n- [x] Done\n- [-] Cancelled";
+  assert.equal(await sort(plugin, input, "completed"), fallback);
+  type = "CANCELLED";
+  plugin.app.plugins.manifests = {};
+  assert.equal(await sort(plugin, input, "completed"), fallback);
+});
+
+test("Tasks settings are validated at the boundary and include core cancelled statuses", async () => {
+  const plugin = pluginWithSettings(null, async () => ({
+    statusSettings: {
+      coreStatuses: [{ symbol: " ", type: "CANCELLED" }],
+      customStatuses: [null, { symbol: 1, type: "CANCELLED" }, { symbol: ">>", type: "CANCELLED" }],
+    },
+  }));
+  await plugin.onload();
+  assert.equal(await sort(plugin, "- [ ] Cancelled core\n- [x] Done", "completed"),
+    "- [x] Done\n- [ ] Cancelled core");
+  for (const data of [null, {}, { statusSettings: { coreStatuses: {}, customStatuses: "invalid" } }]) {
+    plugin.app.vault.adapter.read = async () => JSON.stringify(data);
+    assert.equal(await sort(plugin, "- [-] Cancelled\n- [ ] Open", "completed"),
+      "- [ ] Open\n- [-] Cancelled");
+  }
+  plugin.app.vault.adapter.exists = async () => false;
+  plugin.app.vault.adapter.read = () => assert.fail("No settings file to read");
+  assert.equal(await sort(plugin, "- [-] Cancelled\n- [ ] Open", "completed"),
+    "- [ ] Open\n- [-] Cancelled");
+});
+
+test("both clear commands honour custom cancelled statuses and the complete-tree safeguard", async () => {
+  const plugin = pluginWithSettings({
+    cancelledCountsAsCompleted: false,
+    requireCompleteTreeForClearing: true,
+  }, async () => ({
+    statusSettings: { customStatuses: [{ symbol: ">", type: "CANCELLED" }] },
+  }));
+  await plugin.onload();
+  const input = "- [x] Parent\n  - [>] Refiled child\n- [>] Refiled\n- [ ] Open";
+  for (const clearCancelled of [false, true]) {
+    plugin.settings.clearCancelledTasks = clearCancelled;
+    const expected = clearCancelled ? "- [ ] Open" : input;
+    assert.equal(await sort(plugin, input, "clear"), expected);
+    let value = input;
+    await plugin.clearCompletedDocument({
+      getValue: () => value,
+      transaction: ({ changes }) => { value = changes[0].text; },
+    });
+    assert.equal(value, expected);
+  }
+});
 
 test("60-day range includes its last day and overdue dates, falls back to scheduled, and groups later dates with undated tasks", async () => {
   const plugin = pluginWithSettings({ sortableDateRangeDays: 60 });
@@ -90,7 +209,7 @@ test("60-day range includes its last day and overdue dates, falls back to schedu
     "- [x] Done ✅ 2025-12-31",
     "- [ ] Due wins 📅 2026-02-15 ⏳ 2026-01-01",
   ];
-  assert.equal(sort(plugin, input.join("\n")), [
+  assert.equal(await sort(plugin, input.join("\n")), [
     input[7], input[6], input[5], input[9], input[2], input[3],
     input[0], input[1], input[4], input[8],
   ].join("\n"));
@@ -108,12 +227,12 @@ test("blank range preserves unlimited sorting; zero includes today but not tomor
   ];
   const unlimited = pluginWithSettings({ sortableDateRangeDays: "" });
   await unlimited.onload();
-  assert.equal(sort(unlimited, input.join("\n")), [input[2], input[1], input[0], input[3]].join("\n"));
+  assert.equal(await sort(unlimited, input.join("\n")), [input[2], input[1], input[0], input[3]].join("\n"));
   assert.equal(unlimited.notices.at(-1), "Sorted tasks by due date; completed tasks moved to the bottom.");
 
   const zero = pluginWithSettings({ sortableDateRangeDays: 0 });
   await zero.onload();
-  assert.equal(sort(zero, input.join("\n")), [input[2], input[0], input[1], input[3]].join("\n"));
+  assert.equal(await sort(zero, input.join("\n")), [input[2], input[0], input[1], input[3]].join("\n"));
   assert.match(zero.notices.at(-1), /2 tasks skipped from date sorting/);
 });
 
@@ -121,7 +240,7 @@ test("reports skipped tasks when no edit is needed and counts only the sorted le
   const plugin = pluginWithSettings({ sortableDateRangeDays: 60 });
   await plugin.onload();
   const input = "- [ ] June 📅 2026-06-01\n  - [ ] Nested July 📅 2026-07-01\n- [ ] Undated\n- [ ] March 📅 2026-03-03";
-  assert.equal(sort(plugin, input), input);
+  assert.equal(await sort(plugin, input), input);
   assert.equal(plugin.notices.at(-1),
     "Nothing to sort. 2 tasks skipped from date sorting (outside date range).");
 });
@@ -130,7 +249,7 @@ test("reports a single scheduled-only task beyond the range", async () => {
   const plugin = pluginWithSettings({ sortableDateRangeDays: 60 });
   await plugin.onload();
   const input = "- [ ] Scheduled June ⏳ 2026-06-01";
-  assert.equal(sort(plugin, input), input);
+  assert.equal(await sort(plugin, input), input);
   assert.equal(plugin.notices.at(-1),
     "Nothing to sort. 1 task skipped from date sorting (outside date range).");
 });
@@ -146,7 +265,7 @@ test("counts skipped tasks across separate selected list groups", async () => {
     "- [ ] February 📅 2026-02-01",
   ];
   const selection = { anchor: { line: 0, ch: 0 }, head: { line: 4, ch: 10 } };
-  assert.equal(sort(plugin, input.join("\n"), "due-date", selection), [
+  assert.equal(await sort(plugin, input.join("\n"), "due-date", selection), [
     input[1], input[0], input[2], input[4], input[3],
   ].join("\n"));
   assert.match(plugin.notices.at(-1), /2 tasks skipped from date sorting/);
@@ -179,7 +298,7 @@ test("date range does not change completed-task sorting", async () => {
   const plugin = pluginWithSettings({ sortableDateRangeDays: 0 });
   await plugin.onload();
   const input = "- [x] Done\n- [ ] June 📅 2026-06-01\n- [ ] Today 📅 2026-01-01";
-  assert.equal(sort(plugin, input, "completed"), "- [ ] June 📅 2026-06-01\n- [ ] Today 📅 2026-01-01\n- [x] Done");
+  assert.equal(await sort(plugin, input, "completed"), "- [ ] June 📅 2026-06-01\n- [ ] Today 📅 2026-01-01\n- [x] Done");
   assert.equal(plugin.notices.at(-1), "Moved 1 completed task to the bottom.");
 });
 
@@ -188,7 +307,7 @@ test("clear removes done subtrees and preserves cancelled tasks by default", asy
   const plugin = pluginWithSettings(null);
   await plugin.onload();
   assert.equal(plugin.settings.clearCancelledTasks, false);
-  assert.equal(sort(plugin, "- [x] Done\n  - [ ] Child\n- [-] Cancelled\n- [ ] Open", "clear"),
+  assert.equal(await sort(plugin, "- [x] Done\n  - [ ] Child\n- [-] Cancelled\n- [ ] Open", "clear"),
     "- [-] Cancelled\n- [ ] Open");
 });
 
@@ -199,16 +318,16 @@ test("clear cancelled setting is independent of sorting and persists", async () 
   const control = plugin.settingControls.find((s) => s.name === "Clear cancelled tasks").control;
   await control.change(true);
   assert.equal(plugin.saved.clearCancelledTasks, true);
-  assert.equal(sort(plugin, "- [-] Cancelled\n- [X] Done\n# Keep", "clear"), "# Keep");
+  assert.equal(await sort(plugin, "- [-] Cancelled\n- [X] Done\n# Keep", "clear"), "# Keep");
 });
 
 test("clear handles a single final task and leaves incomplete tasks alone", async () => {
   const plugin = pluginWithSettings({ clearCancelledTasks: "true" });
   await plugin.onload();
   assert.equal(plugin.settings.clearCancelledTasks, false);
-  assert.equal(sort(plugin, "- [x] Done", "clear"), "");
-  assert.equal(sort(plugin, "- [ ] Open\n- [x] Done", "clear"), "- [ ] Open");
-  assert.equal(sort(plugin, "- [ ] Open", "clear"), "- [ ] Open");
+  assert.equal(await sort(plugin, "- [x] Done", "clear"), "");
+  assert.equal(await sort(plugin, "- [ ] Open\n- [x] Done", "clear"), "- [ ] Open");
+  assert.equal(await sort(plugin, "- [ ] Open", "clear"), "- [ ] Open");
   assert.equal(plugin.notices.at(-1), "Nothing to clear.");
 });
 
@@ -231,7 +350,7 @@ test("document clear removes completed tasks from separate and nested lists", as
     getValue: () => value,
     transaction: ({ changes }) => { value = changes[0].text; },
   };
-  plugin.clearCompletedDocument(editor);
+  await plugin.clearCompletedDocument(editor);
   assert.equal(value, [
     "# First",
     "- [ ] Parent",
@@ -253,7 +372,7 @@ test("document clear can remove cancelled tasks and ignores fenced checkboxes", 
     getValue: () => value,
     transaction: ({ changes }) => { value = changes[0].text; },
   };
-  plugin.clearCompletedDocument(editor);
+  await plugin.clearCompletedDocument(editor);
   assert.equal(value, "```\n- [x] Example\n```");
   assert.equal(plugin.notices.at(-1),
     "Cleared 1 completed task from this document.");
@@ -275,7 +394,7 @@ test("complete-tree safeguard blocks a parent but continues clearing other docum
     getValue: () => value,
     transaction: ({ changes }) => { value = changes[0].text; },
   };
-  plugin.clearCompletedDocument(editor);
+  await plugin.clearCompletedDocument(editor);
   assert.equal(value, [
     "- Test A",
     "  - another",
@@ -299,7 +418,7 @@ test("complete-sibling setting clears valid children from a blocked document tre
     getValue: () => value,
     transaction: ({ changes }) => { value = changes[0].text; },
   };
-  plugin.clearCompletedDocument(editor);
+  await plugin.clearCompletedDocument(editor);
   assert.equal(value, "- [x] Parent\n  - [ ] not");
   assert.equal(plugin.notices.at(-1),
     "Cleared 3 completed tasks from this document. " +
@@ -310,7 +429,7 @@ test("tree settings apply to clearing the current list scope", async () => {
   const input = "- [x] Parent\n  - [ ] not\n  - [x] yes\n- [x] Standalone";
   const blocked = pluginWithSettings({ requireCompleteTreeForClearing: true });
   await blocked.onload();
-  assert.equal(sort(blocked, input, "clear"),
+  assert.equal(await sort(blocked, input, "clear"),
     "- [x] Parent\n  - [ ] not\n  - [x] yes");
   assert.match(blocked.notices.at(-1), /1 incomplete task tree/);
 
@@ -319,7 +438,7 @@ test("tree settings apply to clearing the current list scope", async () => {
     clearCompleteSiblingsInBlockedTrees: true,
   });
   await siblings.onload();
-  assert.equal(sort(siblings, input, "clear"), "- [x] Parent\n  - [ ] not");
+  assert.equal(await sort(siblings, input, "clear"), "- [x] Parent\n  - [ ] not");
   assert.match(siblings.notices.at(-1), /1 incomplete task tree/);
 });
 

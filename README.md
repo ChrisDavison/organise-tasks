@@ -18,7 +18,7 @@ You can optionally limit sorting to dates within a number of days from today.
 **Clear completed tasks** removes `[x]` / `[X]` items at the same list
 level and within the same cursor or selection scope as sorting. Children and
 annotations are removed with their parent, including unfinished children.
-Cancelled `[-]` items are kept by default. The edit can be undone in one step.
+Cancelled items are kept by default. The edit can be undone in one step.
 
 **Clear completed tasks in current document** applies the same clearing
 rules to every list in the active document, including nested tasks. When a
@@ -27,6 +27,12 @@ completed parent is removed, its whole subtree is removed with it.
 ## Behaviour
 
 - A completed task is `[x]` / `[X]` (done) or `[-]` (cancelled).
+- When the [Tasks plugin](https://publish.obsidian.md/tasks/Getting%20Started/Statuses/Status%20Settings)
+  is installed, symbols with type `CANCELLED` in its core or custom status settings
+  also count as cancelled. For example, `[>]` counts as cancelled when its type
+  is `CANCELLED`, regardless of its name. Settings are read each time a command
+  runs, so changes apply without reloading Organise Tasks. This also works when
+  Tasks is disabled. Without Tasks installed, `[-]` remains the only cancelled symbol.
 - Done tasks come first in the completed group, cancelled tasks after them.
 - Within each completed group, tasks are ordered newest first by their done
   (`✅ YYYY-MM-DD`) or cancelled (`❌ YYYY-MM-DD`) date. Tasks without a date
@@ -47,9 +53,9 @@ changing any of the above until you touch a setting.
 
 ## Settings
 
-- **Cancelled counts as completed** (on): `[-]` tasks are completed and sink
-  below done tasks. Off: `[-]` counts as incomplete and stays on top.
-- **Clear cancelled tasks** (off): also remove `[-]` items when clearing
+- **Cancelled counts as completed** (on): cancelled tasks are completed and sink
+  below done tasks. Off: cancelled tasks count as incomplete and stay on top.
+- **Clear cancelled tasks** (off): also remove cancelled items when clearing
   completed tasks. This is independent of **Cancelled counts as completed**.
 - **Require complete trees before clearing** (off): keep a completed parent
   when any child list item cannot be cleared. The command reports blocked trees
