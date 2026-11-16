@@ -10,8 +10,9 @@ list level touched by your selection. Completed tasks sink to the bottom and
 everything else keeps its order.
 
 **Sort by due date** orders incomplete tasks soonest first using `📅`
-due dates, falling back to `⏳` scheduled dates. Undated incomplete tasks follow
-dated ones. Completed tasks move to the bottom using the completed-task sorting
+due dates, falling back to `⏳` scheduled dates. Tasks with the same date are
+ordered by priority (`🔺` `⏫` `🔼` none `🔽` `⏬`). Undated incomplete tasks
+follow dated ones, in their original order. Completed tasks move to the bottom using the completed-task sorting
 rules described below. Overdue tasks are not specially grouped or highlighted.
 You can optionally limit sorting to dates within a number of days from today.
 
@@ -26,19 +27,25 @@ completed parent is removed, its whole subtree is removed with it.
 
 ## Behaviour
 
-- A completed task is `[x]` / `[X]` (done) or `[-]` (cancelled).
+- A completed task is `[x]` / `[X]` (done) or `[-]` (cancelled). `[/]` is in
+  progress.
 - When the [Tasks plugin](https://publish.obsidian.md/tasks/Getting%20Started/Statuses/Status%20Settings)
-  is installed, symbols with type `CANCELLED` in its core or custom status settings
-  also count as cancelled. For example, `[>]` counts as cancelled when its type
-  is `CANCELLED`, regardless of its name. Settings are read each time a command
-  runs, so changes apply without reloading Organise Tasks. This also works when
-  Tasks is disabled. Without Tasks installed, `[-]` remains the only cancelled symbol.
+  is installed, the type of each symbol in its core or custom status settings
+  overrides these defaults. For example, `[>]` counts as cancelled when its type
+  is `CANCELLED`, and `[d]` counts as done when its type is `DONE`, regardless
+  of their names. Settings are read each time a command runs, so changes apply
+  without reloading Organise Tasks. This also works when Tasks is disabled.
+- Dates use the Tasks plugin's emoji: `📅` (or `📆`, `🗓`) due, `⏳` (or `⌛`)
+  scheduled, `🛫` start, `✅` done and `❌` cancelled, each with or without a
+  trailing variation selector. Dates are read on every checkbox, whatever its
+  status symbol.
 - Done tasks come first in the completed group, cancelled tasks after them.
 - Within each completed group, tasks are ordered newest first by their done
   (`✅ YYYY-MM-DD`) or cancelled (`❌ YYYY-MM-DD`) date. Tasks without a date
   follow the dated ones, in their original order.
 - Everything else at the sorted level counts as incomplete and stays on top.
-  This includes `[ ]`, `[/]`, other status symbols, and plain bullets.
+  This includes `[ ]`, `[/]`, other status symbols, and plain bullets. Plain
+  bullets have no dates or priority.
 - Children and annotation lines move with their parent and keep their order.
 - No selection: the cursor item's own level. With a selection: the shallowest
   list level present, and every affected parent's full child list is sorted.
@@ -66,12 +73,18 @@ changing any of the above until you touch a setting.
   list indentation. Matters when lists mix tabs and spaces.
 - **Undated completed tasks** (bottom of the completed group): completed tasks
   without a date follow the dated ones. Top: they come first.
+- **Sort date** (due date, else scheduled): which date **Sort by due date**
+  uses. **Earliest of start, scheduled and due** uses the earliest of the three,
+  like the Tasks plugin's "happens" date.
+- **In-progress tasks first** (off): in both sort commands, in-progress tasks
+  go above other incomplete tasks. Each group keeps its own order.
 - **Sortable date range (days)** (blank): blank sorts all dates as before. Set a
   whole number of days (0-365000) to sort incomplete tasks dated on or before
   today plus that many calendar days, including overdue dates. For example,
   with 60 days set on January 1, January and February dates are sortable, but
   June dates are not. A due date beyond the range falls back to a scheduled
-  date within the range. Tasks with neither date in range join undated tasks
+  date within the range. With **Earliest of start, scheduled and due**, the
+  earliest date within the range is used. Tasks with neither date in range join undated tasks
   after dated tasks, preserving their relative order. This setting only affects
   **Sort by due date**, not **Sort completed tasks to bottom**. The command's
   notice counts tasks excluded from date sorting because every date they have

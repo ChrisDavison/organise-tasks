@@ -4,19 +4,25 @@ const { Notice, Plugin, PluginSettingTab, Setting } = require("obsidian");
  * Organise Tasks: sort tasks by completion or due date, and clear completed tasks
  *
  * Sorts one list level only. Whole subtrees move together and children keep
- * their order. A completed task is `[x]`/`[X]` (done), `[-]`, or a status
- * configured as CANCELLED in the installed Tasks plugin. Cancelled items sink
- * below done items, and both are ordered newest first by
- * their ✅/❌ date, with undated items last. Anything else at the sorted level
- * (including plain bullets and other status symbols) is incomplete and stays on top.
+ * their order. A completed task is `[x]`/`[X]` (done) or `[-]` (cancelled);
+ * status types set in the installed Tasks plugin (DONE, CANCELLED,
+ * IN_PROGRESS and so on) override these defaults. Cancelled items sink below
+ * done items, and both are ordered newest first by their ✅/❌ date, with
+ * undated items last. Anything else at the sorted level (including plain
+ * bullets and other status symbols) is incomplete and stays on top.
+ *
+ * Sort by due date orders incomplete tasks by due date (scheduled as a
+ * fallback, or the earliest of start, scheduled and due), breaking date ties
+ * by priority. Dates and priorities use the Tasks plugin's emoji.
  *
  * Without a selection the level is the cursor item's own level. With a
  * selection the level is the shallowest list level present, and every affected
  * parent's complete child list is sorted.
  *
- * The rules above are the defaults; a settings tab can treat `[-]` as
- * incomplete (along with custom cancelled statuses), change the tab width,
- * and move undated completed tasks to the top of the completed group.
+ * The rules above are the defaults; a settings tab can treat cancelled tasks
+ * as incomplete, change the tab width, move undated completed tasks to the
+ * top of the completed group, limit the date range, change the sort date and
+ * put in-progress tasks first.
  *
  * Plain JavaScript on purpose: no build step, no dependencies.
  */
@@ -36,6 +42,10 @@ const DEFAULT_SETTINGS = {
   undatedCompletedAtBottom: true,
   // No limit by default; otherwise the number of days ahead to sort by date.
   sortableDateRangeDays: null,
+  // "due": due date, then scheduled. "earliest": earliest of start, scheduled, due.
+  sortDate: "due",
+  // In-progress tasks sort above other incomplete tasks.
+  inProgressFirst: false,
 };
 
 function boolOr(value, fallback) {
@@ -70,6 +80,8 @@ function normalizeSettings(loaded) {
     DEFAULT_SETTINGS.undatedCompletedAtBottom
   );
   settings.sortableDateRangeDays = parseSortableDays(settings.sortableDateRangeDays);
+  settings.sortDate = settings.sortDate === "earliest" ? "earliest" : "due";
+  settings.inProgressFirst = boolOr(settings.inProgressFirst, false);
   return settings;
 }
 
@@ -77,10 +89,19 @@ function normalizeSettings(loaded) {
 const CHECKBOX_RE = /^([ \t]*)([-*+])([ \t]+)\[(.)\](?=[ \t]|$)/;
 // Any other bullet, including ones with no content.
 const BULLET_RE = /^([ \t]*)([-*+])(?=[ \t]|$)/;
-const DONE_DATE_RE = /✅\s*(\d{4}-\d{2}-\d{2})/;
-const CANCEL_DATE_RE = /❌\s*(\d{4}-\d{2}-\d{2})/;
-const DUE_DATE_RE = /📅\s*(\d{4}-\d{2}-\d{2})/;
-const SCHEDULED_DATE_RE = /⏳\s*(\d{4}-\d{2}-\d{2})/;
+// Same emoji and aliases as the Tasks plugin, with an optional variation selector.
+const DONE_DATE_RE = /✅\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const CANCEL_DATE_RE = /❌\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const DUE_DATE_RE = /(?:📅|📆|🗓)\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const SCHEDULED_DATE_RE = /(?:⏳|⌛)\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const START_DATE_RE = /🛫\uFE0F?\s*(\d{4}-\d{2}-\d{2})/u;
+const PRIORITY_RE = /🔺|⏫|🔼|🔽|⏬/u;
+// Lower ranks sort first. A task with no priority is normal, between medium and low.
+const PRIORITY_RANK = { "🔺": 0, "⏫": 1, "🔼": 2, "🔽": 4, "⏬": 5 };
+const NORMAL_PRIORITY_RANK = 3;
+// Status types for checkbox symbols when the Tasks plugin does not define them.
+const DEFAULT_STATUS_TYPES = [["x", "DONE"], ["X", "DONE"], ["-", "CANCELLED"], ["/", "IN_PROGRESS"]];
+const KNOWN_STATUS_TYPES = new Set(["TODO", "DONE", "IN_PROGRESS", "CANCELLED", "NON_TASK"]);
 const FENCE_RE = /^[ \t]*(```|~~~)/;
 
 function indentWidth(whitespace, tabWidth) {
@@ -101,7 +122,14 @@ function isBlank(line) {
   return /^[ \t]*$/.test(content);
 }
 
-function parseLines(lines, settings, cancelledSymbols) {
+function nonListItem(indent, quoteDepth) {
+  return {
+    kind: "none", indent, quoteDepth, status: null, inProgress: false, priorityRank: NORMAL_PRIORITY_RANK,
+    doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null, startDate: null,
+  };
+}
+
+function parseLines(lines, settings, statusTypes) {
   const parsed = [];
   let inFence = false;
 
@@ -116,30 +144,33 @@ function parseLines(lines, settings, cancelledSymbols) {
 
     if (FENCE_RE.test(content)) {
       inFence = !inFence;
-      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null });
+      parsed.push(nonListItem(indent, quoteDepth));
       continue;
     }
 
     if (inFence) {
-      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null });
+      parsed.push(nonListItem(indent, quoteDepth));
       continue;
     }
 
     const checkbox = CHECKBOX_RE.exec(content);
-    if (checkbox && (" xX-".includes(checkbox[4]) || cancelledSymbols.has(checkbox[4]))) {
-      const symbol = checkbox[4];
+    if (checkbox) {
+      const type = statusTypes.get(checkbox[4]);
+      const priority = PRIORITY_RE.exec(content);
       parsed.push({
         kind: "checkbox",
         indent: indentWidth(checkbox[1], settings.tabWidth),
         quoteDepth,
-        status:
-          cancelledSymbols.has(symbol)
-            ? (settings.cancelledCountsAsCompleted ? "cancelled" : "incomplete")
-            : (symbol === "x" || symbol === "X" ? "done" : "incomplete"),
+        status: type === "DONE" ? "done"
+          : type === "CANCELLED" && settings.cancelledCountsAsCompleted ? "cancelled"
+          : "incomplete",
+        inProgress: type === "IN_PROGRESS",
+        priorityRank: priority ? PRIORITY_RANK[priority[0]] : NORMAL_PRIORITY_RANK,
         doneDate: (DONE_DATE_RE.exec(content) || [])[1] || null,
         cancelDate: (CANCEL_DATE_RE.exec(content) || [])[1] || null,
         dueDate: (DUE_DATE_RE.exec(content) || [])[1] || null,
         scheduledDate: (SCHEDULED_DATE_RE.exec(content) || [])[1] || null,
+        startDate: (START_DATE_RE.exec(content) || [])[1] || null,
       });
       continue;
     }
@@ -151,15 +182,18 @@ function parseLines(lines, settings, cancelledSymbols) {
         indent: indentWidth(bullet[1], settings.tabWidth),
         quoteDepth,
         status: "incomplete",
+        inProgress: false,
+        priorityRank: NORMAL_PRIORITY_RANK,
         doneDate: null,
         cancelDate: null,
         dueDate: null,
         scheduledDate: null,
+        startDate: null,
       });
       continue;
     }
 
-    parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null });
+    parsed.push(nonListItem(indent, quoteDepth));
   }
 
   return parsed;
@@ -296,29 +330,6 @@ function tierOf(item) {
   return 0;
 }
 
-// Incomplete in original order, then done newest first, then cancelled newest first.
-// Undated completed items come after dated ones (before them when the settings
-// say so). Ordering is stable.
-function sortOrder(parsed, starts, settings) {
-  const entries = starts.map((line, position) => ({ position, item: parsed[line] }));
-
-  entries.sort((a, b) => {
-    const tierA = tierOf(a.item);
-    const tierB = tierOf(b.item);
-    if (tierA !== tierB) return tierA - tierB;
-    if (tierA === 0) return a.position - b.position;
-
-    const dateA = tierA === 1 ? a.item.doneDate : a.item.cancelDate;
-    const dateB = tierB === 1 ? b.item.doneDate : b.item.cancelDate;
-    if (dateA && dateB) return dateA === dateB ? a.position - b.position : (dateB < dateA ? -1 : 1);
-    if (dateA) return settings.undatedCompletedAtBottom ? -1 : 1;
-    if (dateB) return settings.undatedCompletedAtBottom ? 1 : -1;
-    return a.position - b.position;
-  });
-
-  return entries.map((entry) => entry.position);
-}
-
 function sortableThrough(settings, today) {
   if (settings.sortableDateRangeDays === null) return null;
   // Use local calendar days rather than elapsed milliseconds, so DST changes
@@ -333,10 +344,18 @@ function sortableThrough(settings, today) {
   ].join("-");
 }
 
-function incompleteDate(item, through) {
-  if (item.dueDate && (through === null || item.dueDate <= through)) return item.dueDate;
-  if (item.scheduledDate && (through === null || item.scheduledDate <= through)) return item.scheduledDate;
-  return null;
+// Dates the due-date sort can use for an incomplete task, in preference order.
+function candidateDates(item, settings) {
+  return settings.sortDate === "earliest"
+    ? [item.startDate, item.scheduledDate, item.dueDate]
+    : [item.dueDate, item.scheduledDate];
+}
+
+// Due mode: the first in-range date. Earliest mode: the earliest in-range date.
+function incompleteDate(item, settings, through) {
+  const inRange = candidateDates(item, settings).filter((date) => date && (through === null || date <= through));
+  if (!inRange.length) return null;
+  return settings.sortDate === "earliest" ? inRange.reduce((min, date) => (date < min ? date : min)) : inRange[0];
 }
 
 function skippedDateNotice(count) {
@@ -344,25 +363,28 @@ function skippedDateNotice(count) {
     " skipped from date sorting (outside date range)." : "";
 }
 
-// Incomplete tasks sort by in-range due date (or in-range scheduled date when
-// due is absent or too far away). Out-of-range and undated tasks follow in
-// their original order. Completed tasks follow using the completed-task rules.
-function sortDueDateOrder(parsed, starts, settings, through) {
+// Incomplete tasks come first, in-progress ones above the rest when the setting
+// is on. "completed" mode keeps their original order. "due-date" mode orders
+// them by sort date, then priority; undated and out-of-range tasks follow in
+// original order. Done tasks follow, then cancelled, each newest first by their
+// completion date, with undated ones after (or before) dated ones. Ordering is stable.
+function sortOrder(parsed, starts, settings, mode, through) {
   const entries = starts.map((line, position) => ({ position, item: parsed[line] }));
 
   entries.sort((a, b) => {
     const tierA = tierOf(a.item);
     const tierB = tierOf(b.item);
-    if (tierA !== tierB) {
-      if (tierA === 0) return -1;
-      if (tierB === 0) return 1;
-      return tierA - tierB;
-    }
+    if (tierA !== tierB) return tierA - tierB;
 
     if (tierA === 0) {
-      const dateA = incompleteDate(a.item, through);
-      const dateB = incompleteDate(b.item, through);
-      if (dateA && dateB) return dateA === dateB ? a.position - b.position : (dateA < dateB ? -1 : 1);
+      if (settings.inProgressFirst && a.item.inProgress !== b.item.inProgress) return a.item.inProgress ? -1 : 1;
+      if (mode !== "due-date") return a.position - b.position;
+      const dateA = incompleteDate(a.item, settings, through);
+      const dateB = incompleteDate(b.item, settings, through);
+      if (dateA && dateB) {
+        if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+        return a.item.priorityRank - b.item.priorityRank || a.position - b.position;
+      }
       if (dateA) return -1;
       if (dateB) return 1;
       return a.position - b.position;
@@ -418,9 +440,7 @@ function applyGroup(lines, parsed, group, settings, mode, through) {
     };
   }
 
-  const order = mode === "due-date"
-    ? sortDueDateOrder(parsed, starts, settings, through)
-    : sortOrder(parsed, starts, settings);
+  const order = sortOrder(parsed, starts, settings, mode, through);
   const unchanged = order.every((value, position) => value === position);
   if (unchanged) return null;
 
@@ -582,29 +602,30 @@ class OrganiseTasksPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  async cancelledTaskSymbols() {
-    const symbols = new Set(["-"]);
+  // Symbol to Tasks status type. Types set in the Tasks plugin override the defaults.
+  async taskStatusTypes() {
+    const types = new Map(DEFAULT_STATUS_TYPES);
     const tasksManifest = this.app.plugins.manifests["obsidian-tasks-plugin"];
-    if (!tasksManifest) return symbols;
+    if (!tasksManifest) return types;
 
     const dataPath = tasksManifest.dir + "/data.json";
-    if (!(await this.app.vault.adapter.exists(dataPath))) return symbols;
+    if (!(await this.app.vault.adapter.exists(dataPath))) return types;
     const statusSettings = JSON.parse(await this.app.vault.adapter.read(dataPath))?.statusSettings;
     for (const statuses of [statusSettings?.coreStatuses, statusSettings?.customStatuses]) {
       if (!Array.isArray(statuses)) continue;
       for (const status of statuses) {
-        if (status?.type === "CANCELLED" && typeof status.symbol === "string" && status.symbol.length === 1) {
-          symbols.add(status.symbol);
+        if (KNOWN_STATUS_TYPES.has(status?.type) && typeof status.symbol === "string" && status.symbol.length === 1) {
+          types.set(status.symbol, status.type);
         }
       }
     }
-    return symbols;
+    return types;
   }
 
   async clearCompletedDocument(editor) {
-    const cancelledSymbols = await this.cancelledTaskSymbols();
+    const statusTypes = await this.taskStatusTypes();
     const lines = editor.getValue().split("\n");
-    const parsed = parseLines(lines, { ...this.settings, cancelledCountsAsCompleted: true }, cancelledSymbols);
+    const parsed = parseLines(lines, { ...this.settings, cancelledCountsAsCompleted: true }, statusTypes);
     const removed = new Set();
     const stats = { cleared: 0, blocked: 0 };
 
@@ -636,11 +657,11 @@ class OrganiseTasksPlugin extends Plugin {
   }
 
   async sortTasks(editor, mode) {
-    const cancelledSymbols = await this.cancelledTaskSymbols();
+    const statusTypes = await this.taskStatusTypes();
     const lines = editor.getValue().split("\n");
     const parsed = parseLines(lines, mode === "clear"
       ? { ...this.settings, cancelledCountsAsCompleted: true }
-      : this.settings, cancelledSymbols);
+      : this.settings, statusTypes);
     const cursor = editor.getCursor();
     const selections = editor.listSelections();
 
@@ -705,8 +726,8 @@ class OrganiseTasksPlugin extends Plugin {
       if (through !== null) {
         skippedDates += group.starts.filter((line) => {
           const item = parsed[line];
-          return tierOf(item) === 0 && (item.dueDate || item.scheduledDate) &&
-            !incompleteDate(item, through);
+          return tierOf(item) === 0 && candidateDates(item, this.settings).some(Boolean) &&
+            !incompleteDate(item, this.settings, through);
         }).length;
       }
       const result = applyGroup(lines, parsed, group, this.settings, mode, through);
@@ -784,9 +805,9 @@ class OrganiseTasksPlugin extends Plugin {
     if (mode === "due-date") {
       new Notice("Sorted tasks by due date; completed tasks moved to the bottom." + skippedDateNotice(skippedDates));
     } else {
-      new Notice(
-        "Moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
-      );
+      new Notice(movedTotal
+        ? "Moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
+        : "Moved in-progress tasks to the top.");
     }
   }
 }
@@ -861,6 +882,30 @@ class OrganiseTasksSettingTab extends PluginSettingTab {
             return;
           }
           this.plugin.settings.sortableDateRangeDays = days;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Sort date")
+      .setDesc("Which date Sort by due date uses for incomplete tasks.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("due", "Due date, else scheduled")
+          .addOption("earliest", "Earliest of start, scheduled and due")
+          .setValue(this.plugin.settings.sortDate)
+          .onChange(async (value) => {
+            this.plugin.settings.sortDate = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("In-progress tasks first")
+      .setDesc("Sort in-progress tasks above other incomplete tasks in both sort commands.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.inProgressFirst).onChange(async (value) => {
+          this.plugin.settings.inProgressFirst = value;
           await this.plugin.saveSettings();
         })
       );
