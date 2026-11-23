@@ -28,6 +28,7 @@ function pluginWithSettings(saved, loadTasksData = null) {
     addText(callback) { this.addControl(callback); return this; }
     addToggle(callback) { this.addControl(callback); return this; }
     addDropdown(callback) { this.addControl(callback); return this; }
+    addTextArea(callback) { this.addControl(callback); return this; }
     addControl(callback) {
       const control = {
         addOption() { return this; },

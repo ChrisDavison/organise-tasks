@@ -21,8 +21,9 @@ const { Notice, Plugin, PluginSettingTab, Setting } = require("obsidian");
  *
  * The rules above are the defaults; a settings tab can treat cancelled tasks
  * as incomplete, change the tab width, move undated completed tasks to the
- * top of the completed group, limit the date range, change the sort date and
- * put in-progress tasks first.
+ * top of the completed group, limit the date range, change the sort date,
+ * put in-progress tasks first, and list which checkbox symbols sort as
+ * completed, in order.
  *
  * Plain JavaScript on purpose: no build step, no dependencies.
  */
@@ -46,6 +47,9 @@ const DEFAULT_SETTINGS = {
   sortDate: "due",
   // In-progress tasks sort above other incomplete tasks.
   inProgressFirst: false,
+  // Checkbox symbols that sort as completed, top of the completed group first.
+  // Empty: done, then cancelled, by status type.
+  completedSymbolOrder: [],
 };
 
 function boolOr(value, fallback) {
@@ -58,6 +62,13 @@ function parseSortableDays(value) {
   if (!/^\d+$/.test(text)) return null;
   const days = Number(text);
   return Number.isSafeInteger(days) && days <= MAX_SORTABLE_RANGE_DAYS ? days : null;
+}
+
+// One single-character symbol per entry, duplicates dropped.
+function parseSymbolOrder(value) {
+  const entries = Array.isArray(value) ? value : String(value ?? "").split("\n");
+  const symbols = entries.map((entry) => String(entry).trim()).filter((entry) => [...entry].length === 1);
+  return [...new Set(symbols)];
 }
 
 // Keep persisted values sane; anything malformed falls back to the default.
@@ -82,6 +93,7 @@ function normalizeSettings(loaded) {
   settings.sortableDateRangeDays = parseSortableDays(settings.sortableDateRangeDays);
   settings.sortDate = settings.sortDate === "earliest" ? "earliest" : "due";
   settings.inProgressFirst = boolOr(settings.inProgressFirst, false);
+  settings.completedSymbolOrder = parseSymbolOrder(settings.completedSymbolOrder);
   return settings;
 }
 
@@ -124,7 +136,7 @@ function isBlank(line) {
 
 function nonListItem(indent, quoteDepth) {
   return {
-    kind: "none", indent, quoteDepth, status: null, inProgress: false, priorityRank: NORMAL_PRIORITY_RANK,
+    kind: "none", indent, quoteDepth, status: null, tier: 0, completedDate: null, inProgress: false, priorityRank: NORMAL_PRIORITY_RANK,
     doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null, startDate: null,
   };
 }
@@ -157,17 +169,26 @@ function parseLines(lines, settings, statusTypes) {
     if (checkbox) {
       const type = statusTypes.get(checkbox[4]);
       const priority = PRIORITY_RE.exec(content);
+      const status = type === "DONE" ? "done"
+        : type === "CANCELLED" && settings.cancelledCountsAsCompleted ? "cancelled"
+        : "incomplete";
+      const doneDate = (DONE_DATE_RE.exec(content) || [])[1] || null;
+      const cancelDate = (CANCEL_DATE_RE.exec(content) || [])[1] || null;
+      // Sort tier: 0 is incomplete. A symbol order, when set, replaces done/cancelled.
+      const order = settings.completedSymbolOrder;
+      const tier = order.length ? order.indexOf(checkbox[4]) + 1
+        : status === "done" ? 1 : status === "cancelled" ? 2 : 0;
       parsed.push({
         kind: "checkbox",
         indent: indentWidth(checkbox[1], settings.tabWidth),
         quoteDepth,
-        status: type === "DONE" ? "done"
-          : type === "CANCELLED" && settings.cancelledCountsAsCompleted ? "cancelled"
-          : "incomplete",
+        status,
+        tier,
+        completedDate: type === "CANCELLED" ? cancelDate || doneDate : doneDate || cancelDate,
         inProgress: type === "IN_PROGRESS",
         priorityRank: priority ? PRIORITY_RANK[priority[0]] : NORMAL_PRIORITY_RANK,
-        doneDate: (DONE_DATE_RE.exec(content) || [])[1] || null,
-        cancelDate: (CANCEL_DATE_RE.exec(content) || [])[1] || null,
+        doneDate,
+        cancelDate,
         dueDate: (DUE_DATE_RE.exec(content) || [])[1] || null,
         scheduledDate: (SCHEDULED_DATE_RE.exec(content) || [])[1] || null,
         startDate: (START_DATE_RE.exec(content) || [])[1] || null,
@@ -182,6 +203,8 @@ function parseLines(lines, settings, statusTypes) {
         indent: indentWidth(bullet[1], settings.tabWidth),
         quoteDepth,
         status: "incomplete",
+        tier: 0,
+        completedDate: null,
         inProgress: false,
         priorityRank: NORMAL_PRIORITY_RANK,
         doneDate: null,
@@ -324,12 +347,6 @@ function resolveGroup(parsed, lines, index, width) {
   return { key: "parent@" + parent, starts: group.starts, end: group.end };
 }
 
-function tierOf(item) {
-  if (item.status === "done") return 1;
-  if (item.status === "cancelled") return 2;
-  return 0;
-}
-
 function sortableThrough(settings, today) {
   if (settings.sortableDateRangeDays === null) return null;
   // Use local calendar days rather than elapsed milliseconds, so DST changes
@@ -372,8 +389,8 @@ function sortOrder(parsed, starts, settings, mode, through) {
   const entries = starts.map((line, position) => ({ position, item: parsed[line] }));
 
   entries.sort((a, b) => {
-    const tierA = tierOf(a.item);
-    const tierB = tierOf(b.item);
+    const tierA = a.item.tier;
+    const tierB = b.item.tier;
     if (tierA !== tierB) return tierA - tierB;
 
     if (tierA === 0) {
@@ -390,8 +407,8 @@ function sortOrder(parsed, starts, settings, mode, through) {
       return a.position - b.position;
     }
 
-    const dateA = tierA === 1 ? a.item.doneDate : a.item.cancelDate;
-    const dateB = tierB === 1 ? b.item.doneDate : b.item.cancelDate;
+    const dateA = a.item.completedDate;
+    const dateB = b.item.completedDate;
     if (dateA && dateB) return dateA === dateB ? a.position - b.position : (dateB < dateA ? -1 : 1);
     if (dateA) return settings.undatedCompletedAtBottom ? -1 : 1;
     if (dateB) return settings.undatedCompletedAtBottom ? 1 : -1;
@@ -460,7 +477,7 @@ function applyGroup(lines, parsed, group, settings, mode, through) {
     text,
     moved: order.reduce((count, sourcePosition, destinationPosition) => {
       return count + (
-        sourcePosition !== destinationPosition && tierOf(parsed[starts[sourcePosition]]) > 0 ? 1 : 0
+        sourcePosition !== destinationPosition && parsed[starts[sourcePosition]].tier > 0 ? 1 : 0
       );
     }, 0),
   };
@@ -726,7 +743,7 @@ class OrganiseTasksPlugin extends Plugin {
       if (through !== null) {
         skippedDates += group.starts.filter((line) => {
           const item = parsed[line];
-          return tierOf(item) === 0 && candidateDates(item, this.settings).some(Boolean) &&
+          return item.tier === 0 && candidateDates(item, this.settings).some(Boolean) &&
             !incompleteDate(item, this.settings, through);
         }).length;
       }
@@ -847,6 +864,21 @@ class OrganiseTasksSettingTab extends PluginSettingTab {
           this.plugin.settings.cancelledCountsAsCompleted = value;
           await this.plugin.saveSettings();
         })
+      );
+
+    new Setting(containerEl)
+      .setName("Completed symbols")
+      .setDesc(
+        "Checkbox symbols that sort as completed, one per line, in the order they appear " +
+        "below the incomplete tasks. Other symbols stay on top. Leave blank to sort done, " +
+        "then cancelled tasks. Clearing still follows the status types."
+      )
+      .addTextArea((text) =>
+        text.setPlaceholder("x\n-").setValue(this.plugin.settings.completedSymbolOrder.join("\n"))
+          .onChange(async (value) => {
+            this.plugin.settings.completedSymbolOrder = parseSymbolOrder(value);
+            await this.plugin.saveSettings();
+          })
       );
 
     new Setting(containerEl)

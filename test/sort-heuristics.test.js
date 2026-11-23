@@ -33,6 +33,7 @@ async function loadPlugin(saved, tasksStatuses = null) {
         addText(callback) { return this.addControl(callback); }
         addToggle(callback) { return this.addControl(callback); }
         addDropdown(callback) { return this.addControl(callback); }
+        addTextArea(callback) { return this.addControl(callback); }
         addControl(callback) {
           this.control = {
             addOption() { return this; },
@@ -105,6 +106,18 @@ test("Tasks status types override defaults, including custom done symbols", asyn
   ]);
   const input = ["- [d] Custom done ✅ 2026-01-01", "- [-] Now a todo", "- [x] Done ✅ 2025-12-01"];
   assert.deepEqual(await sort(plugin, input, "completed"), [input[1], input[0], input[2]]);
+});
+
+test("completed symbol order sets which symbols sink and in what order", async () => {
+  const plugin = await loadPlugin({ completedSymbolOrder: [">", "-", "x"] });
+  const input = [
+    "- [x] Done ✅ 2026-01-01",
+    "- [>] Forwarded old ✅ 2025-01-01",
+    "- [X] Capital X is not listed",
+    "- [-] Cancelled ❌ 2025-06-01",
+    "- [>] Forwarded new ✅ 2025-12-01",
+  ];
+  assert.deepEqual(await sort(plugin, input, "completed"), [input[2], input[4], input[1], input[3], input[0]]);
 });
 
 test("priority breaks ties between equal dates only", async () => {

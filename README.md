@@ -76,6 +76,12 @@ changing any of the above until you touch a setting.
 - **Sort date** (due date, else scheduled): which date **Sort by due date**
   uses. **Earliest of start, scheduled and due** uses the earliest of the three,
   like the Tasks plugin's "happens" date.
+- **Completed symbols** (blank): checkbox symbols that sort as completed, one
+  per line, in the order they appear below incomplete tasks. For example
+  `>`, `-`, `x` puts `[>]` first, then `[-]`, then `[x]`; any symbol not listed
+  (including `[X]`) stays with the incomplete tasks. Each group is ordered by
+  its `✅` or `❌` date as above. Blank: done, then cancelled, by status type.
+  Clearing ignores this list and still follows status types.
 - **In-progress tasks first** (off): in both sort commands, in-progress tasks
   go above other incomplete tasks. Each group keeps its own order.
 - **Sortable date range (days)** (blank): blank sorts all dates as before. Set a
